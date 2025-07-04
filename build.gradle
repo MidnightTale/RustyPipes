@@ -1,6 +1,7 @@
 plugins {
     id 'java'
     id("xyz.jpenilla.run-paper") version "2.3.1"
+    id("io.papermc.paperweight.userdev") version "2.0.0-beta.17"
 }
 
 group = 'fun.mntale'
@@ -19,7 +20,16 @@ repositories {
 }
 
 dependencies {
-    compileOnly("io.papermc.paper:paper-api:1.21.6-R0.1-SNAPSHOT")
+    paperweight.paperDevBundle("1.21.7-R0.1-SNAPSHOT")
+}
+
+// Configure paperweight to use Mojang mappings (preferred for Paper servers)
+// For Groovy DSL, use static methods instead of direct field access
+paperweight.reobfArtifactConfiguration = io.papermc.paperweight.userdev.ReobfArtifactConfiguration.getMOJANG_PRODUCTION()
+
+// Make reobfJar run on default build task
+tasks.assemble {
+    dependsOn(tasks.reobfJar)
 }
 
 tasks {
