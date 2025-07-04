@@ -148,12 +148,10 @@ public class NMSUtils {
     }
 
     /**
-     * Converts an NMS ItemStack to Bukkit ItemStack.
-     * @param nmsItem The NMS ItemStack.
-     * @return The Bukkit ItemStack.
+     * Converts an NMS ItemStack to a Bukkit ItemStack.
      */
-    public static org.bukkit.inventory.ItemStack toBukkitItemStack(net.minecraft.world.item.ItemStack nmsItem) {
-        return CraftItemStack.asBukkitCopy(nmsItem);
+    public static org.bukkit.inventory.ItemStack toBukkitItemStack(net.minecraft.world.item.ItemStack nmsStack) {
+        return org.bukkit.craftbukkit.inventory.CraftItemStack.asBukkitCopy(nmsStack);
     }
 
     /**
@@ -222,55 +220,45 @@ public class NMSUtils {
     }
 
     /**
-     * Performs an item transfer between two containers using NMS.
-     * @param sourceContainer The source container.
-     * @param destContainer The destination container.
-     * @param sourceSlot The source slot.
-     * @return True if transfer was successful.
+     * Transfers up to 'amount' items from the given slot from source to dest. Returns true if any items were moved.
      */
-    public static boolean transferItem(BaseContainerBlockEntity sourceContainer, BaseContainerBlockEntity destContainer, int sourceSlot) {
-        net.minecraft.world.item.ItemStack sourceItem = sourceContainer.getItem(sourceSlot);
-        if (sourceItem.isEmpty()) return false;
-
-        // Try to find a slot in destination
-        for (int destSlot = 0; destSlot < destContainer.getContainerSize(); destSlot++) {
-            net.minecraft.world.item.ItemStack destItem = destContainer.getItem(destSlot);
-            if (destItem.isEmpty()) {
-                // Empty slot, place item there
-                net.minecraft.world.item.ItemStack toMove = sourceItem.copy();
-                toMove.setCount(1);
-                destContainer.setItem(destSlot, toMove);
-                
-                // Remove from source
-                if (sourceItem.getCount() > 1) {
-                    sourceItem.setCount(sourceItem.getCount() - 1);
-                    sourceContainer.setItem(sourceSlot, sourceItem);
-                } else {
-                    sourceContainer.setItem(sourceSlot, net.minecraft.world.item.ItemStack.EMPTY);
+    public static boolean transferItem(BaseContainerBlockEntity source, BaseContainerBlockEntity dest, int slot, int amount) {
+        net.minecraft.world.item.ItemStack sourceItem = source.getItem(slot);
+        if (sourceItem.isEmpty() || amount <= 0) return false;
+        int moved = 0;
+        int maxStack = sourceItem.getMaxStackSize();
+        for (int destSlot = 0; destSlot < dest.getContainerSize() && moved < amount; destSlot++) {
+            net.minecraft.world.item.ItemStack destItem = dest.getItem(destSlot);
+            // Stack with same item
+            if (!destItem.isEmpty() && net.minecraft.world.item.ItemStack.isSameItemSameComponents(sourceItem, destItem) && destItem.getCount() < maxStack) {
+                int canMove = Math.min(amount - moved, Math.min(sourceItem.getCount(), maxStack - destItem.getCount()));
+                if (canMove > 0) {
+                    destItem.setCount(destItem.getCount() + canMove);
+                    dest.setItem(destSlot, destItem);
+                    sourceItem.setCount(sourceItem.getCount() - canMove);
+                    moved += canMove;
                 }
-                
-                // Mark as changed
-                sourceContainer.setChanged();
-                destContainer.setChanged();
-                return true;
-            } else if (destItem.getItem() == sourceItem.getItem() && destItem.getCount() < destItem.getMaxStackSize()) {
-                // Can stack with existing item
-                destItem.setCount(destItem.getCount() + 1);
-                destContainer.setItem(destSlot, destItem);
-                
-                // Remove from source
-                if (sourceItem.getCount() > 1) {
-                    sourceItem.setCount(sourceItem.getCount() - 1);
-                    sourceContainer.setItem(sourceSlot, sourceItem);
-                } else {
-                    sourceContainer.setItem(sourceSlot, net.minecraft.world.item.ItemStack.EMPTY);
-                }
-                
-                // Mark as changed
-                sourceContainer.setChanged();
-                destContainer.setChanged();
-                return true;
             }
+        }
+        // Fill empty slots
+        for (int destSlot = 0; destSlot < dest.getContainerSize() && moved < amount; destSlot++) {
+            net.minecraft.world.item.ItemStack destItem = dest.getItem(destSlot);
+            if (destItem.isEmpty()) {
+                int canMove = Math.min(amount - moved, sourceItem.getCount());
+                if (canMove > 0) {
+                    net.minecraft.world.item.ItemStack toPlace = sourceItem.copy();
+                    toPlace.setCount(canMove);
+                    dest.setItem(destSlot, toPlace);
+                    sourceItem.setCount(sourceItem.getCount() - canMove);
+                    moved += canMove;
+                }
+            }
+        }
+        source.setItem(slot, sourceItem.isEmpty() ? net.minecraft.world.item.ItemStack.EMPTY : sourceItem);
+        if (moved > 0) {
+            source.setChanged();
+            dest.setChanged();
+            return true;
         }
         return false;
     }

@@ -31,7 +31,7 @@ public final class RustyPipes extends JavaPlugin {
             getServer().getPluginManager().registerEvents(pipeBlockListener, this);
             
             // Schedule item transfer tick every 10 ticks (0.5 seconds)
-            tickTaskId = getServer().getScheduler().runTaskTimer(this, pipeNetworkManager::tick, 10L, 10L).getTaskId();
+            tickTaskId = getServer().getScheduler().runTaskTimer(this, pipeNetworkManager::tick, 20, 20L).getTaskId();
             
             DebugLogger.log("<#00ff99>RustyPipes enabled successfully!</#00ff99> <gray>Using NMS for optimal performance.</gray>");
             

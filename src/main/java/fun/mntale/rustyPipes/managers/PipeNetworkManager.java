@@ -17,6 +17,14 @@ import org.bukkit.World;
 import org.bukkit.block.Block;
 import org.bukkit.block.BlockFace;
 import org.bukkit.plugin.Plugin;
+import org.bukkit.entity.ItemDisplay;
+import org.bukkit.inventory.ItemStack;
+import org.bukkit.Location;
+import org.bukkit.util.Transformation;
+import org.bukkit.util.Vector;
+import org.bukkit.scheduler.BukkitRunnable;
+import org.joml.Vector3f;
+import org.joml.Quaternionf;
 
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
@@ -78,7 +86,7 @@ public class PipeNetworkManager {
     public void updateNetworks(Block changedBlock) {
         String worldName = changedBlock.getWorld().getName();
         BlockPos changedPos = NMSUtils.getBlockPos(changedBlock);
-        int radius = 3;
+        int radius = 24;
         World world = changedBlock.getWorld();
         // 1. Collect block data (main thread)
         Map<BlockPos, Material> blockMap = new HashMap<>();
@@ -250,16 +258,28 @@ public class PipeNetworkManager {
                             bestLeft = left;
                         }
                     }
-                    if (bestInput == null) continue;
-                    BaseContainerBlockEntity dest = NMSUtils.getContainerBlockEntity(nmsWorld, bestInput.containerPos);
+                    final Endpoint finalOutput = output;
+                    final Endpoint finalBestInput = bestInput;
+                    if (finalBestInput == null) continue;
+                    BaseContainerBlockEntity dest = NMSUtils.getContainerBlockEntity(nmsWorld, finalBestInput.containerPos);
                     if (dest == null) continue;
-                    // Try to move one item
+                    int moved = 0;
                     for (int slot = 0; slot < source.getContainerSize(); slot++) {
                         net.minecraft.world.item.ItemStack item = source.getItem(slot);
                         if (item.isEmpty()) continue;
-                        if (NMSUtils.transferItem(source, dest, slot)) {
-                            DebugLogger.log("<#00eaff>[NMS]</#00eaff> <#00ff99>Moved:</#00ff99> <#ffb300>" + NMSUtils.toBukkitItemStack(item).getType() + "</#ffb300> <gray>x1</gray> <gray>|</gray> <#00eaff>From:</#00eaff> <gray>" + world.getBlockAt(output.containerPos.getX(), output.containerPos.getY(), output.containerPos.getZ()).getType() + "</gray> <aqua>" + NMSUtils.formatPosition(worldName, output.containerPos) + "</aqua> <gray>|</gray> <#ffb300>To:</#ffb300> <gray>" + world.getBlockAt(bestInput.containerPos.getX(), bestInput.containerPos.getY(), bestInput.containerPos.getZ()).getType() + "</gray> <aqua>" + NMSUtils.formatPosition(worldName, bestInput.containerPos) + "</aqua>");
-                            break;
+                        int toMove = Math.min(16 - moved, item.getCount());
+                        if (toMove <= 0) break;
+                        if (NMSUtils.transferItem(source, dest, slot, toMove)) {
+                            for (int i = 0; i < toMove; i++) {
+                                Bukkit.getScheduler().runTaskAsynchronously(plugin, () -> {
+                                    List<BlockPos> path = findPipePath(network, finalOutput.pos, finalBestInput.pos);
+                                    Bukkit.getScheduler().runTask(plugin, () -> {
+                                        spawnPipeVisual(world, path, NMSUtils.toBukkitItemStack(item).asOne());
+                                    });
+                                });
+                            }
+                            moved += toMove;
+                            if (moved >= 16) break;
                         }
                     }
                 }
@@ -341,5 +361,71 @@ public class PipeNetworkManager {
     // Helper to check if a block is an endpoint (copper block, cut copper, chiseled copper, and all variants)
     private static boolean isEndpointBlock(Material mat) {
         return BOTH_ENDPOINTS.contains(mat) || OUTPUT_ENDPOINTS.contains(mat) || INPUT_ENDPOINTS.contains(mat);
+    }
+
+    // Helper: Find shortest path between two pipe positions in the network (BFS)
+    private List<BlockPos> findPipePath(PipeNetwork network, BlockPos start, BlockPos end) {
+        Map<BlockPos, BlockPos> prev = new HashMap<>();
+        Queue<BlockPos> queue = new LinkedList<>();
+        Set<BlockPos> visited = new HashSet<>();
+        queue.add(start);
+        visited.add(start);
+        while (!queue.isEmpty()) {
+            BlockPos curr = queue.poll();
+            if (curr.equals(end)) break;
+            for (BlockPos adj : NMSUtils.getAdjacentPositions(curr)) {
+                if (!visited.contains(adj) && network.hasPipeAt(adj)) {
+                    queue.add(adj);
+                    visited.add(adj);
+                    prev.put(adj, curr);
+                }
+            }
+        }
+        // Reconstruct path
+        List<BlockPos> path = new ArrayList<>();
+        BlockPos curr = end;
+        while (curr != null && !curr.equals(start)) {
+            path.add(curr);
+            curr = prev.get(curr);
+        }
+        if (curr != null) path.add(start);
+        Collections.reverse(path);
+        return path;
+    }
+
+    // Helper: Spawn and animate an ItemDisplay along the pipe path
+    private void spawnPipeVisual(World world, List<BlockPos> path, ItemStack item) {
+        if (path.isEmpty()) return;
+        // Random offset for group effect
+        double offsetX = (Math.random() - 0.5) * 0.3; // -0.15 to +0.15
+        double offsetZ = (Math.random() - 0.5) * 0.3;
+        Location start = new Location(world, path.get(0).getX() + 0.5 + offsetX, path.get(0).getY() + 0.5, path.get(0).getZ() + 0.5 + offsetZ);
+        ItemDisplay display = (ItemDisplay) world.spawn(start, ItemDisplay.class, e -> {
+            e.setItemStack(item.asOne());
+            e.setInvulnerable(true);
+            e.setGravity(false);
+            e.setTransformation(new Transformation(
+                new Vector3f(0, 0, 0),
+                new Quaternionf(),
+                new Vector3f(0.5f, 0.5f, 0.5f),
+                new Quaternionf()
+            ));
+        });
+        display.setTeleportDuration(1);
+        new BukkitRunnable() {
+            int step = 0;
+            @Override
+            public void run() {
+                if (step >= path.size()) {
+                    display.remove();
+                    cancel();
+                    return;
+                }
+                BlockPos pos = path.get(step);
+                display.setTeleportDuration(1);
+                display.teleportAsync(new Location(world, pos.getX() + 0.5 + offsetX, pos.getY() + 0.5, pos.getZ() + 0.5 + offsetZ));
+                step++;
+            }
+        }.runTaskTimer(plugin, 1L, 2L);
     }
 } 
